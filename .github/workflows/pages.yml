@@ -1,0 +1,43 @@
+name: Publish the original Souq Al-Jardah presentation
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Restore and verify the original HTML
+        run: |
+          mkdir -p _site
+          xz --decompress --stdout presentation.html.xz > _site/index.html
+          echo '3d2bad3612b1d12604613e522bfb8985fff970e5a52ce9484079a0ebbba22908  _site/index.html' | sha256sum --check --strict
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
