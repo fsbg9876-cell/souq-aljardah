@@ -2,6 +2,10 @@ name: Publish the original Souq Al-Jardah presentation
 on:
   push:
     branches: [main]
+    paths:
+      - 'presentation.html.xz'
+      - 'viewer-compat.js'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions: {}
@@ -24,6 +28,17 @@ jobs:
           mkdir -p _site
           xz --decompress --stdout presentation.html.xz > _site/index.html
           echo '3d2bad3612b1d12604613e522bfb8985fff970e5a52ce9484079a0ebbba22908  _site/index.html' | sha256sum --check --strict
+      - name: Load the hosting compatibility script
+        run: |
+          cp viewer-compat.js _site/
+          python3 - <<'PY'
+          from pathlib import Path
+          page = Path('_site/index.html')
+          source = page.read_bytes()
+          assert source.count(b'</head>') == 1
+          include = b'<script src="viewer-compat.js"></script>'
+          page.write_bytes(source.replace(b'</head>', include + b'</head>', 1))
+          PY
       - uses: actions/upload-pages-artifact@v4
         with:
           path: _site
