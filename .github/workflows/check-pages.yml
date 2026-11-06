@@ -1,0 +1,83 @@
+name: Check the public presentation
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/check-pages.yml'
+
+permissions: {}
+jobs:
+  guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    env:
+      SITE_URL: https://fsbg9876-cell.github.io/souq-aljardah/
+    steps:
+      - name: Install the browser test client
+        run: npm install --no-save --no-package-lock --ignore-scripts playwright@1.64.1
+      - name: Test from signed-out mobile and desktop browsers
+        shell: bash
+        run: |
+          node <<'JS'
+          const { chromium, webkit, devices } = require('playwright');
+          const assert = require('node:assert/strict');
+          const { createHash } = require('node:crypto');
+          
+          const url = process.env.SITE_URL;
+          const checksum = '3d2bad3612b1d12604613e522bfb8985fff970e5a52ce9484079a0ebbba22908';
+          
+          async function verify(name, engine, device) {
+            const browser = await engine.launch();
+            try {
+              const context = await browser.newContext({ ...device, locale: 'ar-SA' });
+              assert.equal((await context.cookies()).length, 0);
+              const page = await context.newPage();
+              page.setDefaultTimeout(12000);
+              const response = await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+              assert.equal(response.status(), 200);
+              assert.equal(new URL(response.url()).href, url);
+              assert.equal(createHash('sha256').update(await response.body()).digest('hex'), checksum);
+              const active = page.locator('body > section.j51-active');
+              const hit = device.isMobile ? 'tap' : 'click';
+              const width = await page.evaluate(() => [innerWidth, document.documentElement.scrollWidth]);
+              assert.ok(width[1] <= width[0] + 1, 'Page overflows viewport: ' + width);
+              const broken = await page.locator('img').evaluateAll(images =>
+                images.filter(img => !img.complete || !img.naturalWidth).map(img => img.alt));
+              assert.deepEqual(broken, []);
+              for (let i = 1; i <= 25; i++) {
+                assert.equal(await active.getAttribute('id'), 's' + i);
+                if (i === 1 || i === 17) {
+                  const zoom = active.locator('a.j58-zoom').first();
+                  const id = await zoom.getAttribute('href');
+                  await zoom[hit]();
+                  const dialog = page.locator(id);
+                  await dialog.waitFor({ state: 'visible' });
+                  assert.ok(await dialog.locator('img').first().evaluate(img => img.naturalWidth > 0));
+                  await dialog.getByRole('link', {name: /إغلاق/}).first()[hit]();
+                  await dialog.waitFor({state:'hidden'});
+                  assert.equal(await active.getAttribute('id'), 's' + i);
+                }
+                if (i < 25) {
+                  await active.locator('a[href="#s' + (i + 1) + '"]').last()[hit]();
+                  await page.locator('#s' + (i + 1) + '.j51-active').waitFor({state:'visible'});
+                }
+              }
+              await active.locator('a[href="#archive-gallery"]')[hit]();
+              await page.locator('#archive-gallery.j51-active').waitFor({state:'visible'});
+              await active.locator('a[href="#s25"]').first()[hit]();
+              await page.locator('#s25.j51-active').waitFor({state:'visible'});
+              for (let i = 25; i > 1; i--) {
+                await active.locator('a[href="#s' + (i - 1) + '"]').last()[hit]();
+                await page.locator('#s' + (i - 1) + '.j51-active').waitFor({state:'visible'});
+              }
+              console.log(name + ' passed: guest HTTPS, original checksum, images, 25 slides forward and back, photo zoom, archive' );
+            } finally {
+              await browser.close();
+            }
+          }
+          (async () => {
+            await verify('iPhone WebKit', webkit, devices['iPhone 13']);
+            await verify('Desktop Chromium', chromium, {viewport: {width: 1440, height: 900}});
+          })().catch(error => { console.error(error); process.exitCode = 1; });
+          JS
